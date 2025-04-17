@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kanban Task Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+    <style>
+        /* Use Inter font */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Light gray background */
+        }
+        /* Make columns scrollable if content overflows */
+        .kanban-column .tasks {
+            min-height: 200px; /* Ensure columns have a minimum height */
+            max-height: 60vh; /* Limit height and allow scrolling */
+            overflow-y: auto;
+             /* Simple scrollbar styling */
+            scrollbar-width: thin;
+            scrollbar-color: #9ca3af #e5e7eb;
+        }
+        /* Webkit scrollbar styling */
+        .kanban-column .tasks::-webkit-scrollbar {
+            width: 8px;
+        }
+        .kanban-column .tasks::-webkit-scrollbar-track {
+            background: #e5e7eb;
+            border-radius: 10px;
+        }
+        .kanban-column .tasks::-webkit-scrollbar-thumb {
+            background-color: #9ca3af;
+            border-radius: 10px;
+            border: 2px solid #e5e7eb;
+        }
+        /* Styling for the task card being dragged */
+        .dragging {
+            opacity: 0.5;
+            border: 2px dashed #60a5fa; /* Blue dashed border */
+        }
+        /* Highlight drop zones */
+        .drag-over {
+            background-color: #dbeafe; /* Light blue background */
+            border: 2px dashed #93c5fd;
+        }
+        /* Style buttons */
+        button {
+             transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+        /* Hide the default drag image */
+         .task.dragging img {
+            display: none;
+        }
+    </style>
+     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="container mx-auto max-w-6xl">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-8">My Kanban Board</h1>
+
+        <div class="mb-8 p-4 bg-white rounded-lg shadow">
+            <h2 class="text-xl font-semibold mb-3 text-gray-700">Add New Task</h2>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <input type="text" id="newTaskInput" placeholder="Enter task description..." class="flex-grow p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="addTaskBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-md shadow">
+                    Add Task
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+            <div id="todo" class="kanban-column bg-gray-100 rounded-lg shadow p-4">
+                <h2 class="text-xl font-semibold mb-4 text-center text-gray-700 border-b pb-2">To Do</h2>
+                <div class="tasks space-y-3 p-1">
+                    </div>
+            </div>
+
+            <div id="inprogress" class="kanban-column bg-gray-100 rounded-lg shadow p-4">
+                <h2 class="text-xl font-semibold mb-4 text-center text-gray-700 border-b pb-2">In Progress</h2>
+                <div class="tasks space-y-3 p-1">
+                    </div>
+            </div>
+
+            <div id="done" class="kanban-column bg-gray-100 rounded-lg shadow p-4">
+                <h2 class="text-xl font-semibold mb-4 text-center text-gray-700 border-b pb-2">Done</h2>
+                <div class="tasks space-y-3 p-1">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const columns = document.querySelectorAll('.kanban-column');
+        const taskContainers = document.querySelectorAll('.tasks');
+        const newTaskInput = document.getElementById('newTaskInput');
+        const addTaskBtn = document.getElementById('addTaskBtn');
+        const todoColumn = document.getElementById('todo').querySelector('.tasks');
+        const doneColumnContainer = document.getElementById('done'); // Container for confetti check
+
+        // --- State ---
+        let tasks = []; // Array to hold task objects {id: string, text: string, column: string}
+        let draggedTask = null; // Reference to the task being dragged
+
+        // --- Functions ---
+
+        /**
+         * Generates a unique ID for tasks.
+         * @returns {string} A unique identifier.
+         */
+        function generateId() {
+            return `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        }
+
+        /**
+         * Creates the HTML element for a task.
+         * @param {object} task - The task object {id, text, column}.
+         * @returns {HTMLElement} The task card element.
+         */
+        function createTaskElement(task) {
+            const taskElement = document.createElement('div');
+            taskElement.classList.add('task', 'bg-white', 'p-3', 'rounded-md', 'shadow', 'cursor-grab', 'flex', 'justify-between', 'items-center');
+            taskElement.setAttribute('draggable', 'true');
+            taskElement.dataset.id = task.id; // Store task ID
+
+            const taskText = document.createElement('span');
+            taskText.textContent = task.text;
+            taskText.classList.add('text-gray-800', 'break-words', 'mr-2'); // Allow text wrapping
+
+            const deleteButton = document.createElement('button');
+            deleteButton.innerHTML = '&times;'; // Simple 'x' icon
+            deleteButton.classList.add('text-red-500', 'hover:text-red-700', 'font-bold', 'text-lg', 'px-2', 'rounded');
+            deleteButton.title = "Delete Task"; // Tooltip
+            deleteButton.onclick = (e) => {
+                e.stopPropagation(); // Prevent drag start when clicking delete
+                deleteTask(task.id);
+            };
+
+            taskElement.appendChild(taskText);
+            taskElement.appendChild(deleteButton);
+
+            // --- Drag and Drop Event Listeners for Tasks ---
+            taskElement.addEventListener('dragstart', handleDragStart);
+            taskElement.addEventListener('dragend', handleDragEnd);
+
+            return taskElement;
+        }
+
+        /**
+         * Renders all tasks onto the board based on the tasks array.
+         */
+        function renderTasks() {
+            // Clear existing tasks from columns
+            taskContainers.forEach(container => container.innerHTML = '');
+
+            // Add tasks to their respective columns
+            tasks.forEach(task => {
+                const taskElement = createTaskElement(task);
+                const columnElement = document.getElementById(task.column)?.querySelector('.tasks');
+                if (columnElement) {
+                    columnElement.appendChild(taskElement);
+                } else {
+                    console.warn(`Column element not found for task column: ${task.column}`);
+                    // Default to 'todo' if column is invalid
+                    tasks = tasks.map(t => t.id === task.id ? { ...t, column: 'todo' } : t);
+                    document.getElementById('todo').querySelector('.tasks').appendChild(taskElement);
+                    saveTasks(); // Save the correction
+                }
+            });
+        }
+
+        /**
+         * Adds a new task to the 'To Do' column.
+         */
+        function addTask() {
+            const taskText = newTaskInput.value.trim();
+            if (taskText === '') {
+                alert('Please enter a task description.'); // Simple validation
+                return;
+            }
+
+            const newTask = {
+                id: generateId(),
+                text: taskText,
+                column: 'todo' // New tasks start in 'To Do'
+            };
+
+            tasks.push(newTask);
+            newTaskInput.value = ''; // Clear input field
+            saveTasks();
+            renderTasks(); // Re-render the board
+        }
+
+        /**
+         * Deletes a task by its ID.
+         * @param {string} taskId - The ID of the task to delete.
+         */
+        function deleteTask(taskId) {
+            if (confirm('Are you sure you want to delete this task?')) {
+                tasks = tasks.filter(task => task.id !== taskId);
+                saveTasks();
+                renderTasks();
+            }
+        }
+
+        /**
+         * Saves the current tasks array to local storage.
+         */
+        function saveTasks() {
+            try {
+                localStorage.setItem('kanbanTasks', JSON.stringify(tasks));
+            } catch (e) {
+                console.error("Failed to save tasks to local storage:", e);
+                alert("Could not save tasks. Local storage might be full or disabled.");
+            }
+        }
+
+        /**
+         * Loads tasks from local storage.
+         */
+        function loadTasks() {
+            const savedTasks = localStorage.getItem('kanbanTasks');
+            if (savedTasks) {
+                try {
+                    tasks = JSON.parse(savedTasks);
+                    // Basic validation to ensure it's an array
+                    if (!Array.isArray(tasks)) {
+                        console.warn("Invalid data found in local storage. Resetting tasks.");
+                        tasks = [];
+                        saveTasks(); // Clear invalid data
+                    }
+                } catch (e) {
+                     console.error("Failed to parse tasks from local storage:", e);
+                     tasks = []; // Reset to empty array on parsing error
+                }
+            } else {
+                // Initialize with example tasks if nothing is saved
+                tasks = [
+                    { id: generateId(), text: 'Example Task 1: Drag me!', column: 'todo' },
+                    { id: generateId(), text: 'Example Task 2: In Progress', column: 'inprogress' },
+                    { id: generateId(), text: 'Example Task 3: Already Done', column: 'done' }
+                ];
+                saveTasks(); // Save initial examples
+            }
+        }
+
+        /**
+         * Triggers the confetti animation.
+         */
+        function triggerConfetti() {
+            confetti({
+                particleCount: 150, // More particles
+                spread: 90,      // Wider spread
+                origin: { y: 0.6 }, // Start slightly lower
+                colors: ['#26ccff', '#a25afd', '#ff5e7e', '#88ff5a', '#fcff42'] // Custom colors
+            });
+        }
+
+        // --- Drag and Drop Handlers ---
+
+        /**
+         * Handles the start of a drag operation.
+         * @param {DragEvent} e - The drag event object.
+         */
+        function handleDragStart(e) {
+            if (e.target.classList.contains('task')) {
+                draggedTask = e.target;
+                setTimeout(() => {
+                    e.target.classList.add('dragging'); // Add styling class
+                }, 0); // Timeout ensures the style applies after drag starts
+                 // Optional: Set custom drag image (can be complex)
+                // const dragImage = new Image();
+                // dragImage.src = 'path/to/your/drag-icon.png'; // Replace with an actual image if desired
+                // e.dataTransfer.setDragImage(dragImage, 10, 10);
+
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', e.target.dataset.id); // Pass task ID
+            }
+        }
+
+        /**
+         * Handles the end of a drag operation.
+         * @param {DragEvent} e - The drag event object.
+         */
+        function handleDragEnd(e) {
+            if (draggedTask) {
+                draggedTask.classList.remove('dragging'); // Remove styling class
+                draggedTask = null; // Clear reference
+            }
+             // Remove highlighting from all columns
+            columns.forEach(col => col.classList.remove('drag-over'));
+        }
+
+        /**
+         * Handles dragging over a potential drop zone (column).
+         * @param {DragEvent} e - The drag event object.
+         */
+        function handleDragOver(e) {
+            e.preventDefault(); // Necessary to allow dropping
+            const targetColumn = e.target.closest('.kanban-column');
+            if (targetColumn && draggedTask) {
+                 targetColumn.classList.add('drag-over'); // Highlight potential drop zone
+                 e.dataTransfer.dropEffect = 'move';
+            }
+        }
+
+        /**
+         * Handles leaving a potential drop zone while dragging.
+         * @param {DragEvent} e - The drag event object.
+         */
+        function handleDragLeave(e) {
+             const targetColumn = e.target.closest('.kanban-column');
+             if (targetColumn) {
+                targetColumn.classList.remove('drag-over'); // Remove highlight
+             }
+        }
+
+        /**
+         * Handles dropping a task onto a column.
+         * @param {DragEvent} e - The drag event object.
+         */
+        function handleDrop(e) {
+            e.preventDefault(); // Prevent default drop behavior
+            const targetColumnElement = e.target.closest('.kanban-column');
+
+            if (targetColumnElement && draggedTask) {
+                const targetColumnId = targetColumnElement.id;
+                const taskId = draggedTask.dataset.id;
+                const taskIndex = tasks.findIndex(task => task.id === taskId);
+
+                if (taskIndex > -1) {
+                    const previousColumnId = tasks[taskIndex].column;
+                    // Update task's column in the array
+                    tasks[taskIndex].column = targetColumnId;
+
+                    // Check if the task was moved to the 'Done' column
+                    if (targetColumnId === 'done' && previousColumnId !== 'done') {
+                        triggerConfetti(); // Celebrate completion!
+                    }
+
+                    saveTasks(); // Save changes to local storage
+                    renderTasks(); // Re-render the board to reflect the move
+                } else {
+                    console.error("Dropped task not found in tasks array:", taskId);
+                }
+                targetColumnElement.classList.remove('drag-over'); // Remove highlight
+            } else if (draggedTask) {
+                 // If dropped outside a valid column, just remove highlighting
+                 columns.forEach(col => col.classList.remove('drag-over'));
+            }
+        }
+
+
+        // --- Event Listeners ---
+
+        // Add task listener
+        addTaskBtn.addEventListener('click', addTask);
+        newTaskInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                addTask();
+            }
+        });
+
+        // Add drag/drop listeners to columns
+        columns.forEach(column => {
+            column.addEventListener('dragover', handleDragOver);
+            column.addEventListener('dragleave', handleDragLeave);
+            column.addEventListener('drop', handleDrop);
+        });
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadTasks(); // Load tasks when the page is ready
+            renderTasks(); // Display loaded tasks
+        });
+
+    </script>
+
+</body>
+</html>
